@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+<title>Camera</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0a0a0a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Camera">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<style>
+  :root{
+    --bg: #0a0a0a;
+    --panel: #151515;
+    --panel-2: #1e1e1e;
+    --line: #262626;
+    --accent: #ff5a1f;
+    --ok: #34d17c;
+    --err: #ff4d4d;
+    --text: #ffffff;
+    --muted: #7a7a7a;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color: transparent; user-select:none;}
+  html,body{
+    margin:0; padding:0; height:100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+    overflow:hidden;
+  }
+  #camera-input{ display:none; }
+
+  .stage{ height:100vh; height:100dvh; display:flex; flex-direction:column; }
+
+  .viewfinder{
+    flex:1;
+    display:flex; align-items:center; justify-content:center;
+    background: radial-gradient(circle at 50% 40%, #1a1a1a 0%, #050505 75%);
+    position:relative;
+    min-height: 0;
+  }
+  .vf-icon{ width:72px; height:72px; opacity:0.45; }
+  .status-pill{
+    position:absolute; top:20px; left:50%; transform:translateX(-50%);
+    padding:7px 16px; border-radius:20px; font-size:12px; font-weight:600;
+    background: rgba(0,0,0,0.6); backdrop-filter: blur(6px); display:none; white-space:nowrap;
+  }
+  .status-pill.show{ display:block; }
+  .status-pill.busy{ color: var(--accent); }
+  .status-pill.ok{ color: var(--ok); }
+  .status-pill.err{ color: var(--err); }
+  .view-btn{
+    position:absolute; top:18px; right:18px;
+    display:flex; align-items:center; gap:6px;
+    background: rgba(0,0,0,0.55); border:1px solid var(--line);
+    color:#fff; font-size:12px; font-weight:600;
+    padding:8px 13px; border-radius:20px; border:none;
+  }
+
+  /* Pending strip */
+  .pending-wrap{
+    background: var(--bg);
+    border-top: 1px solid var(--line);
+    display:none;
+  }
+  .pending-wrap.show{ display:block; }
+  .pending-strip{
+    display:flex; gap:8px; padding: 12px 14px 4px; overflow-x:auto;
+  }
+  .pending-item{
+    position:relative; flex:0 0 auto;
+    width:64px; height:64px; border-radius:10px; overflow:hidden;
+    background: var(--panel-2);
+  }
+  .pending-item img{ width:100%; height:100%; object-fit:cover; display:block; }
+  .pending-item .x{
+    position:absolute; top:3px; right:3px;
+    width:20px; height:20px; border-radius:50%;
+    background: rgba(0,0,0,0.75); border:none;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .save-row{ padding: 8px 14px 14px; }
+  .save-btn{
+    width:100%; padding:14px; border-radius:14px; border:none;
+    background: var(--accent); color:#fff; font-size:15px; font-weight:700;
+    display:flex; align-items:center; justify-content:center; gap:8px;
+  }
+  .save-btn:disabled{ opacity:0.5; }
+
+  /* Controls */
+  .controls{
+    background: var(--bg);
+    padding: 16px 0 calc(env(safe-area-inset-bottom,0px) + 20px);
+    display:flex; align-items:center; justify-content:center;
+  }
+  .shutter{
+    width:74px; height:74px; border-radius:50%;
+    background:transparent; border:3.5px solid var(--text);
+    display:flex; align-items:center; justify-content:center; padding:4px;
+  }
+  .shutter .core{ width:100%; height:100%; border-radius:50%; background:var(--text); transition: transform .12s; }
+  .shutter:active .core{ transform: scale(0.82); }
+
+  /* Overlay: saved gallery */
+  .overlay{
+    position:fixed; inset:0; background: var(--bg); z-index:50;
+    display:none; flex-direction:column;
+  }
+  .overlay.show{ display:flex; }
+  .ov-header{
+    display:flex; align-items:center; justify-content:space-between;
+    padding: calc(env(safe-area-inset-top,0px) + 14px) 16px 14px;
+    border-bottom:1px solid var(--line);
+  }
+  .ov-header h1{ font-size:15px; margin:0; font-weight:700; }
+  .header-actions{ display:flex; gap:8px; align-items:center; }
+  .icon-btn{
+    width:36px; height:36px; border-radius:50%; background:var(--panel); border:none;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .text-btn{
+    background: var(--panel); border:none; color:#fff; font-size:12px; font-weight:700;
+    padding:8px 13px; border-radius:20px;
+  }
+  .text-btn.active{ background: var(--accent); }
+  .ov-body{ flex:1; overflow-y:auto; padding: 14px 14px 100px; }
+  .group-label{
+    font-size:11px; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted);
+    font-weight:700; margin:14px 4px 8px;
+  }
+  .group-label:first-child{ margin-top:0; }
+  .grid{ display:grid; grid-template-columns: repeat(3, 1fr); gap:6px; }
+  .grid .cell{ aspect-ratio:1/1; border-radius:8px; overflow:hidden; background:var(--panel); position:relative; }
+  .grid .cell img{ width:100%; height:100%; object-fit:cover; display:block; }
+  .checkmark{
+    position:absolute; top:6px; right:6px; width:22px; height:22px; border-radius:50%;
+    border:2px solid rgba(255,255,255,0.8); background: rgba(0,0,0,0.3);
+    display:flex; align-items:center; justify-content:center;
+  }
+  .cell.selected .checkmark{ background: var(--accent); border-color: var(--accent); }
+  .cell.selected{ outline: 2px solid var(--accent); outline-offset: -2px; }
+  .empty-state{ text-align:center; color:var(--muted); font-size:13px; padding:60px 20px; }
+
+  .selection-bar{
+    position:fixed; left:0; right:0; bottom:0; z-index:55;
+    padding: 14px 16px calc(env(safe-area-inset-bottom,0px) + 14px);
+    background: var(--panel); border-top:1px solid var(--line);
+    display:none; align-items:center; justify-content:space-between; gap:10px;
+  }
+  .selection-bar.show{ display:flex; }
+  .selection-bar .count{ font-size:13px; color: var(--muted); white-space:nowrap; }
+  .selection-actions{ display:flex; gap:8px; }
+  .dl-selected, .del-selected{
+    display:flex; align-items:center; gap:7px;
+    border:none;
+    padding:11px 18px; border-radius:12px; font-weight:700; font-size:13px;
+  }
+  .dl-selected{ background: var(--accent); color:#fff; }
+  .del-selected{ background: var(--panel-2); color: var(--err); border:1px solid var(--err); }
+  .del-selected:disabled{ opacity:0.5; }
+
+  /* Single view */
+  .single{ position:fixed; inset:0; background:var(--bg); z-index:60; display:none; flex-direction:column; }
+  .single.show{ display:flex; }
+  .single-header{ display:flex; align-items:center; justify-content:space-between; padding: calc(env(safe-area-inset-top,0px) + 14px) 18px 14px; }
+  .single-img-wrap{ flex:1; display:flex; align-items:center; justify-content:center; padding:0 10px; }
+  .single-img-wrap img{ max-width:100%; max-height:100%; border-radius:10px; }
+  .single-footer{ padding:18px 20px calc(env(safe-area-inset-bottom,0px) + 22px); display:flex; gap:10px; }
+  .dl-btn, .del-btn{
+    display:flex; align-items:center; justify-content:center; gap:8px;
+    flex:1; padding:15px; border-radius:14px;
+    text-decoration:none; font-weight:700; font-size:15px; border:none;
+  }
+  .dl-btn{ background:var(--accent); color:#fff; }
+  .del-btn{ background: var(--panel-2); color: var(--err); border:1px solid var(--err); }
+  .del-btn:disabled{ opacity:0.5; }
+
+  /* Confirm modal */
+  .modal-backdrop{
+    position:fixed; inset:0; z-index:80;
+    background: rgba(0,0,0,0.6); backdrop-filter: blur(2px);
+    display:none; align-items:flex-end; justify-content:center;
+  }
+  .modal-backdrop.show{ display:flex; }
+  .modal-card{
+    width:100%; max-width:480px;
+    background: var(--panel); border-top-left-radius:20px; border-top-right-radius:20px;
+    padding: 22px 20px calc(env(safe-area-inset-bottom,0px) + 18px);
+    animation: modal-up .18s ease-out;
+  }
+  @media (min-width:480px){
+    .modal-backdrop{ align-items:center; }
+    .modal-card{ border-radius:18px; }
+  }
+  @keyframes modal-up{ from{ transform: translateY(16px); opacity:0; } to{ transform: translateY(0); opacity:1; } }
+  .modal-icon{
+    width:44px; height:44px; border-radius:50%; background: rgba(255,77,77,0.12);
+    display:flex; align-items:center; justify-content:center; margin-bottom:14px;
+  }
+  .modal-title{ font-size:16px; font-weight:700; margin:0 0 6px; }
+  .modal-text{ font-size:13.5px; color: var(--muted); margin:0 0 20px; line-height:1.4; }
+  .modal-actions{ display:flex; gap:10px; }
+  .modal-btn{
+    flex:1; padding:14px; border-radius:12px; border:none; font-size:14.5px; font-weight:700;
+  }
+  .modal-cancel{ background: var(--panel-2); color:#fff; }
+  .modal-confirm{ background: var(--err); color:#fff; }
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <div class="viewfinder" id="viewfinder">
+    <div class="status-pill" id="status-pill"></div>
+    <button class="view-btn" id="view-gallery-btn">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="7" height="7" rx="1.5" stroke="white" stroke-width="1.8"/><rect x="14" y="3" width="7" height="7" rx="1.5" stroke="white" stroke-width="1.8"/><rect x="3" y="14" width="7" height="7" rx="1.5" stroke="white" stroke-width="1.8"/><rect x="14" y="14" width="7" height="7" rx="1.5" stroke="white" stroke-width="1.8"/></svg>
+      View
+    </button>
+    <svg class="vf-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M4 8C4 6.89543 4.89543 6 6 6H7.5L8.5 4H15.5L16.5 6H18C19.1046 6 20 6.89543 20 8V17C20 18.1046 19.1046 19 18 19H6C4.89543 19 4 18.1046 4 17V8Z" stroke="white" stroke-width="1.5"/>
+      <circle cx="12" cy="12.5" r="3.5" stroke="white" stroke-width="1.5"/>
+    </svg>
+  </div>
+
+  <div class="pending-wrap" id="pending-wrap">
+    <div class="pending-strip" id="pending-strip"></div>
+    <div class="save-row">
+      <button class="save-btn" id="save-btn">Save Photos</button>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button class="shutter" id="shutter-btn"><div class="core"></div></button>
+  </div>
+</div>
+
+<input type="file" id="camera-input" accept="image/*" capture="environment">
+
+<!-- Saved gallery -->
+<div class="overlay" id="gallery-overlay">
+  <div class="ov-header">
+    <h1>Saved Photos</h1>
+    <div class="header-actions">
+      <button class="text-btn" id="select-all-btn" style="display:none;">Select All</button>
+      <button class="text-btn" id="select-toggle">Select</button>
+      <button class="icon-btn" id="close-gallery">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 6L18 18M6 18L18 6" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+  </div>
+  <div class="ov-body" id="ov-body"></div>
+</div>
+
+<div class="selection-bar" id="selection-bar">
+  <span class="count" id="selection-count">0 selected</span>
+  <div class="selection-actions">
+    <button class="del-selected" id="del-selected">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M4 7H20M9 7V4.5C9 3.67 9.67 3 10.5 3H13.5C14.33 3 15 3.67 15 4.5V7M18.5 7L17.7 19.2C17.63 20.2 16.8 21 15.8 21H8.2C7.2 21 6.37 20.2 6.3 19.2L5.5 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Delete
+    </button>
+    <button class="dl-selected" id="dl-selected">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 3V16M12 16L7 11M12 16L17 11M5 21H19" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Download
+    </button>
+  </div>
+</div>
+
+<!-- Single photo view -->
+<div class="single" id="single-overlay">
+  <div class="single-header">
+    <button class="icon-btn" id="back-single">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18L9 12L15 6" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+  <div class="single-img-wrap"><img id="single-img" src="" alt=""></div>
+  <div class="single-footer">
+    <button class="del-btn" id="single-del">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M4 7H20M9 7V4.5C9 3.67 9.67 3 10.5 3H13.5C14.33 3 15 3.67 15 4.5V7M18.5 7L17.7 19.2C17.63 20.2 16.8 21 15.8 21H8.2C7.2 21 6.37 20.2 6.3 19.2L5.5 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Delete
+    </button>
+    <a class="dl-btn" id="single-dl" href="#" target="_blank" rel="noopener">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 3V16M12 16L7 11M12 16L17 11M5 21H19" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Download
+    </a>
+  </div>
+</div>
+
+<!-- Delete confirm modal -->
+<div class="modal-backdrop" id="confirm-backdrop">
+  <div class="modal-card">
+    <div class="modal-icon">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M4 7H20M9 7V4.5C9 3.67 9.67 3 10.5 3H13.5C14.33 3 15 3.67 15 4.5V7M18.5 7L17.7 19.2C17.63 20.2 16.8 21 15.8 21H8.2C7.2 21 6.37 20.2 6.3 19.2L5.5 7" stroke="#ff4d4d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <h2 class="modal-title" id="confirm-title">Photo delete karein?</h2>
+    <p class="modal-text" id="confirm-text">Ye action wapas nahi ho sakta.</p>
+    <div class="modal-actions">
+      <button class="modal-btn modal-cancel" id="confirm-cancel">Cancel</button>
+      <button class="modal-btn modal-confirm" id="confirm-ok">Delete</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const WEBAPP_URL = "https://script.google.com/macros/s/AKfycbwj94SvpHzq29k03611I7uSURspYt-6v7zHQ0KDPyZCe79cxFURFkNPCYSCfKuD6IsJ/exec";
+
+  const cameraInput = document.getElementById('camera-input');
+  const shutterBtn = document.getElementById('shutter-btn');
+  const statusPill = document.getElementById('status-pill');
+  const pendingWrap = document.getElementById('pending-wrap');
+  const pendingStrip = document.getElementById('pending-strip');
+  const saveBtn = document.getElementById('save-btn');
+
+  const viewGalleryBtn = document.getElementById('view-gallery-btn');
+  const galleryOverlay = document.getElementById('gallery-overlay');
+  const closeGallery = document.getElementById('close-gallery');
+  const ovBody = document.getElementById('ov-body');
+  const selectToggle = document.getElementById('select-toggle');
+  const selectAllBtn = document.getElementById('select-all-btn');
+  const selectionBar = document.getElementById('selection-bar');
+  const selectionCount = document.getElementById('selection-count');
+  const dlSelectedBtn = document.getElementById('dl-selected');
+  const delSelectedBtn = document.getElementById('del-selected');
+
+  const singleOverlay = document.getElementById('single-overlay');
+  const backSingle = document.getElementById('back-single');
+  const singleImg = document.getElementById('single-img');
+  const singleDl = document.getElementById('single-dl');
+  const singleDel = document.getElementById('single-del');
+
+  const confirmBackdrop = document.getElementById('confirm-backdrop');
+  const confirmTitle = document.getElementById('confirm-title');
+  const confirmText = document.getElementById('confirm-text');
+  const confirmCancel = document.getElementById('confirm-cancel');
+  const confirmOk = document.getElementById('confirm-ok');
+
+  // Custom confirm modal — resolves true/false, jaisa window.confirm() karta tha
+  function showConfirm(title, text) {
+    confirmTitle.textContent = title;
+    confirmText.textContent = text;
+    confirmBackdrop.classList.add('show');
+    return new Promise((resolve) => {
+      function cleanup(result) {
+        confirmBackdrop.classList.remove('show');
+        confirmOk.removeEventListener('click', onOk);
+        confirmCancel.removeEventListener('click', onCancel);
+        confirmBackdrop.removeEventListener('click', onBackdrop);
+        resolve(result);
+      }
+      function onOk() { cleanup(true); }
+      function onCancel() { cleanup(false); }
+      function onBackdrop(e) { if (e.target === confirmBackdrop) cleanup(false); }
+      confirmOk.addEventListener('click', onOk);
+      confirmCancel.addEventListener('click', onCancel);
+      confirmBackdrop.addEventListener('click', onBackdrop);
+    });
+  }
+
+  let pending = [];       // photos clicked but not saved yet: [{dataUrl}]
+  let rowsCache = [];     // already-saved photos from sheet
+  let selectMode = false;
+  let selected = new Set();
+  let currentSingleIdx = null;
+
+  function pill(type, msg) {
+    statusPill.className = 'status-pill show ' + type;
+    statusPill.textContent = msg;
+    if (type !== 'busy') setTimeout(() => statusPill.classList.remove('show'), 2000);
+  }
+
+  // ===== Capture (local only, no upload yet) =====
+  shutterBtn.addEventListener('click', () => cameraInput.click());
+
+  // Photo ko resize + JPEG compress karta hai taaki size kam ho lekin
+  // dhundhla na dikhe. maxDim=1600 aur quality=0.82 ek accha balance hai.
+  function compressImage(file, maxDim = 1600, quality = 0.82) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          let { width, height } = img;
+          if (width > height && width > maxDim) {
+            height = Math.round(height * (maxDim / width));
+            width = maxDim;
+          } else if (height >= width && height > maxDim) {
+            width = Math.round(width * (maxDim / height));
+            height = maxDim;
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        };
+        img.onerror = reject;
+        img.src = e.target.result;
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  cameraInput.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    cameraInput.value = '';
+    try {
+      const compressedDataUrl = await compressImage(file);
+      pending.push({ dataUrl: compressedDataUrl });
+      renderPending();
+    } catch (err) {
+      pill('err', 'Photo process nahi hui');
+    }
+  });
+
+  function renderPending() {
+    pendingWrap.classList.toggle('show', pending.length > 0);
+    pendingStrip.innerHTML = '';
+    pending.forEach((p, idx) => {
+      const item = document.createElement('div');
+      item.className = 'pending-item';
+      item.innerHTML = `<img src="${p.dataUrl}"><button class="x" data-idx="${idx}">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M6 6L18 18M6 18L18 6" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>
+      </button>`;
+      pendingStrip.appendChild(item);
+    });
+    saveBtn.textContent = 'Save Photos (' + pending.length + ')';
+  }
+
+  pendingStrip.addEventListener('click', (e) => {
+    const btn = e.target.closest('.x');
+    if (!btn) return;
+    pending.splice(Number(btn.dataset.idx), 1);
+    renderPending();
+  });
+
+  // ===== Batch save (parallel uploads for speed) =====
+  saveBtn.addEventListener('click', async () => {
+    if (!pending.length) return;
+    saveBtn.disabled = true;
+    const total = pending.length;
+    let done = 0;
+    let failed = 0;
+    saveBtn.textContent = `Saving 0/${total}...`;
+
+    const uploadOne = (p, i) => fetch(WEBAPP_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ image: p.dataUrl, filename: 'photo_' + Date.now() + '_' + i + '.jpg' })
+    })
+      .then(res => res.json())
+      .then(() => { done++; saveBtn.textContent = `Saving ${done}/${total}...`; })
+      .catch(() => { failed++; });
+
+    // Upload in small parallel batches instead of one-by-one to cut save time
+    const BATCH_SIZE = 4;
+    for (let i = 0; i < pending.length; i += BATCH_SIZE) {
+      const batch = pending.slice(i, i + BATCH_SIZE);
+      await Promise.all(batch.map((p, j) => uploadOne(p, i + j)));
+    }
+
+    pending = [];
+    renderPending();
+    saveBtn.disabled = false;
+    saveBtn.textContent = 'Save Photos';
+    if (failed) pill('err', failed + ' photo(s) save nahi hui');
+    else pill('ok', done + ' photo(s) saved ✓');
+    loadGallery();
+  });
+
+  // ===== Saved gallery =====
+  function thumbUrl(fileId) { return 'https://drive.google.com/thumbnail?id=' + fileId + '&sz=w400'; }
+
+  function loadGallery() {
+    fetch(WEBAPP_URL)
+      .then(r => r.json())
+      .then(rows => { rowsCache = rows || []; renderGallery(); })
+      .catch(() => {});
+  }
+
+  function groupLabel(d) {
+    const date = new Date(d);
+    const today = new Date();
+    const yest = new Date(); yest.setDate(today.getDate() - 1);
+    const sameDay = (a,b) => a.toDateString() === b.toDateString();
+    if (sameDay(date, today)) return 'Today';
+    if (sameDay(date, yest)) return 'Yesterday';
+    return date.toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' });
+  }
+
+  function renderGallery() {
+    ovBody.innerHTML = '';
+    if (!rowsCache.length) {
+      ovBody.innerHTML = '<div class="empty-state">No saved photos yet</div>';
+      return;
+    }
+    const groups = {};
+    rowsCache.forEach((row, idx) => {
+      const label = groupLabel(row.date);
+      if (!groups[label]) groups[label] = [];
+      groups[label].push(idx);
+    });
+    Object.keys(groups).forEach(label => {
+      const h = document.createElement('div');
+      h.className = 'group-label';
+      h.textContent = label + ' · ' + groups[label].length;
+      ovBody.appendChild(h);
+
+      const grid = document.createElement('div');
+      grid.className = 'grid';
+      groups[label].forEach(idx => {
+        const row = rowsCache[idx];
+        const cell = document.createElement('div');
+        cell.className = 'cell';
+        cell.dataset.idx = idx;
+        if (selected.has(idx)) cell.classList.add('selected');
+        cell.innerHTML = `<img src="${thumbUrl(row.fileId)}" loading="lazy"><div class="checkmark"></div>`;
+        cell.addEventListener('click', () => cellTap(idx, cell));
+        grid.appendChild(cell);
+      });
+      ovBody.appendChild(grid);
+    });
+  }
+
+  function cellTap(idx, cell) {
+    if (selectMode) {
+      if (selected.has(idx)) { selected.delete(idx); cell.classList.remove('selected'); }
+      else { selected.add(idx); cell.classList.add('selected'); }
+      updateSelectAllLabel();
+      updateSelectionBar();
+    } else {
+      openSingle(idx);
+    }
+  }
+
+  function updateSelectionBar() {
+    selectionBar.classList.toggle('show', selectMode && selected.size > 0);
+    selectionCount.textContent = selected.size + ' selected';
+  }
+
+  selectToggle.addEventListener('click', () => {
+    selectMode = !selectMode;
+    selectToggle.classList.toggle('active', selectMode);
+    selectToggle.textContent = selectMode ? 'Cancel' : 'Select';
+    selectAllBtn.style.display = selectMode ? '' : 'none';
+    if (!selectMode) {
+      selected.clear();
+      document.querySelectorAll('.cell.selected').forEach(c => c.classList.remove('selected'));
+    }
+    updateSelectAllLabel();
+    updateSelectionBar();
+  });
+
+  function updateSelectAllLabel() {
+    const allSelected = rowsCache.length > 0 && selected.size === rowsCache.length;
+    selectAllBtn.textContent = allSelected ? 'Deselect All' : 'Select All';
+  }
+
+  selectAllBtn.addEventListener('click', () => {
+    const allSelected = rowsCache.length > 0 && selected.size === rowsCache.length;
+    if (allSelected) {
+      selected.clear();
+    } else {
+      rowsCache.forEach((_, idx) => selected.add(idx));
+    }
+    document.querySelectorAll('.cell').forEach(cell => {
+      cell.classList.toggle('selected', selected.has(Number(cell.dataset.idx)));
+    });
+    updateSelectAllLabel();
+    updateSelectionBar();
+  });
+
+  dlSelectedBtn.addEventListener('click', () => {
+    selected.forEach(idx => {
+      const row = rowsCache[idx];
+      const a = document.createElement('a');
+      a.href = row.downloadLink;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    });
+  });
+
+  // ===== Delete (calls the same webapp with action:'delete') =====
+  function deleteFile(fileId) {
+    return fetch(WEBAPP_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ action: 'delete', fileId: fileId })
+    }).then(res => res.json());
+  }
+
+  delSelectedBtn.addEventListener('click', async () => {
+    if (!selected.size) return;
+    const ok = await showConfirm(
+      selected.size + ' photo(s) delete karein?',
+      'Ye action wapas nahi ho sakta.'
+    );
+    if (!ok) return;
+    delSelectedBtn.disabled = true;
+    const idxs = Array.from(selected);
+    let failed = 0;
+    await Promise.all(idxs.map(idx => {
+      const row = rowsCache[idx];
+      return deleteFile(row.fileId).catch(() => { failed++; });
+    }));
+    selected.clear();
+    delSelectedBtn.disabled = false;
+    updateSelectionBar();
+    if (failed) pill('err', failed + ' photo(s) delete nahi hui');
+    else pill('ok', 'Deleted ✓');
+    loadGallery();
+  });
+
+  viewGalleryBtn.addEventListener('click', () => {
+    galleryOverlay.classList.add('show');
+    loadGallery();
+  });
+  closeGallery.addEventListener('click', () => {
+    galleryOverlay.classList.remove('show');
+    selectMode = false; selected.clear();
+    selectToggle.classList.remove('active'); selectToggle.textContent = 'Select';
+    selectAllBtn.style.display = 'none';
+    updateSelectionBar();
+  });
+
+  function openSingle(idx) {
+    currentSingleIdx = idx;
+    const row = rowsCache[idx];
+    singleImg.src = thumbUrl(row.fileId);
+    singleDl.href = row.downloadLink;
+    singleOverlay.classList.add('show');
+  }
+  backSingle.addEventListener('click', () => singleOverlay.classList.remove('show'));
+
+  singleDel.addEventListener('click', async () => {
+    if (currentSingleIdx === null) return;
+    const row = rowsCache[currentSingleIdx];
+    const ok = await showConfirm('Photo delete karein?', 'Ye action wapas nahi ho sakta.');
+    if (!ok) return;
+    singleDel.disabled = true;
+    try {
+      await deleteFile(row.fileId);
+      pill('ok', 'Deleted ✓');
+      singleOverlay.classList.remove('show');
+      loadGallery();
+    } catch (err) {
+      pill('err', 'Delete nahi hui');
+    } finally {
+      singleDel.disabled = false;
+    }
+  });
+
+  loadGallery();
+
+  // ===== PWA: service worker register karo (offline shell + installable) =====
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('service-worker.js').catch(() => {});
+    });
+  }
+</script>
+</body>
+</html>
