@@ -1,13 +1,5 @@
-// Simple app-shell service worker.
-// Photo save/gallery calls Google Apps Script (WEBAPP_URL) — wo network hi
-// use karenge, is service worker ka kaam sirf app ko offline/fast-load
-// banana hai (shell cache karke) aur installable banana hai.
-
 const CACHE_NAME = 'camera-app-v1';
-const APP_SHELL = [
-  './camera.html',
-  './manifest.json'
-];
+const APP_SHELL = ['./index.html', './manifest.json'];
 
 // Install: app shell cache karo
 self.addEventListener('install', (event) => {
