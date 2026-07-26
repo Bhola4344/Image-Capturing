@@ -2,7 +2,7 @@
   "name": "Camera",
   "short_name": "Camera",
   "description": "Click photos aur Google Drive/Sheet me save karo",
-  "start_url": "./camera.html",
+  "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
