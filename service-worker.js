@@ -1,4 +1,4 @@
-const CACHE_NAME = 'camera-app-v1';
+const CACHE_NAME = 'camera-app-v2';
 const APP_SHELL = ['./index.html', './manifest.json'];
 
 // Install: app shell cache karo
