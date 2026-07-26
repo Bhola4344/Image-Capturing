@@ -1,8 +1,8 @@
 {
-  "name": "Camera",
-  "short_name": "Camera",
+  "name": "Image Capturing",
+  "short_name": "Capture",
   "description": "Click photos aur Google Drive/Sheet me save karo",
-  "start_url": "https://superb-lamington-b4449e.netlify.app/",
+  "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
