@@ -207,6 +207,20 @@
   }
   .modal-cancel{ background: var(--panel-2); color:#fff; }
   .modal-confirm{ background: var(--err); color:#fff; }
+
+  /* Live sync indicator */
+  .live-dot{
+    width:7px; height:7px; border-radius:50%;
+    background: var(--muted);
+    display:inline-block; margin-right:6px;
+    transition: background .2s;
+  }
+  .live-dot.on{ background: var(--ok); box-shadow: 0 0 0 0 rgba(52,209,124,0.6); animation: live-pulse 1.6s infinite; }
+  @keyframes live-pulse{
+    0%{ box-shadow: 0 0 0 0 rgba(52,209,124,0.5); }
+    70%{ box-shadow: 0 0 0 6px rgba(52,209,124,0); }
+    100%{ box-shadow: 0 0 0 0 rgba(52,209,124,0); }
+  }
 </style>
 </head>
 <body>
@@ -241,7 +255,7 @@
 <!-- Saved gallery -->
 <div class="overlay" id="gallery-overlay">
   <div class="ov-header">
-    <h1>Saved Photos</h1>
+    <h1><span class="live-dot" id="live-dot"></span>Saved Photos</h1>
     <div class="header-actions">
       <button class="text-btn" id="select-all-btn" style="display:none;">Select All</button>
       <button class="text-btn" id="select-toggle">Select</button>
@@ -305,6 +319,9 @@
 <script>
   const WEBAPP_URL = "https://script.google.com/macros/s/AKfycbwj94SvpHzq29k03611I7uSURspYt-6v7zHQ0KDPyZCe79cxFURFkNPCYSCfKuD6IsJ/exec";
 
+  // Kitni der mein poll karke naye photos check karega jab gallery khuli ho (ms)
+  const POLL_INTERVAL_MS = 4000;
+
   const cameraInput = document.getElementById('camera-input');
   const shutterBtn = document.getElementById('shutter-btn');
   const statusPill = document.getElementById('status-pill');
@@ -322,6 +339,7 @@
   const selectionCount = document.getElementById('selection-count');
   const dlSelectedBtn = document.getElementById('dl-selected');
   const delSelectedBtn = document.getElementById('del-selected');
+  const liveDot = document.getElementById('live-dot');
 
   const singleOverlay = document.getElementById('single-overlay');
   const backSingle = document.getElementById('back-single');
@@ -362,6 +380,9 @@
   let selectMode = false;
   let selected = new Set();
   let currentSingleIdx = null;
+  let pollTimer = null;          // gallery open hone par background polling ka interval
+  let lastSignature = '';        // rowsCache ka fingerprint, change detect karne ke liye
+  let isFetchingGallery = false; // overlapping fetch calls rokne ke liye
 
   function pill(type, msg) {
     statusPill.className = 'status-pill show ' + type;
@@ -473,12 +494,54 @@
   // ===== Saved gallery =====
   function thumbUrl(fileId) { return 'https://drive.google.com/thumbnail?id=' + fileId + '&sz=w400'; }
 
-  function loadGallery() {
-    fetch(WEBAPP_URL)
-      .then(r => r.json())
-      .then(rows => { rowsCache = rows || []; renderGallery(); })
-      .catch(() => {});
+  // rowsCache ka ek chhota fingerprint banata hai (sirf fileIds ka list),
+  // taaki har poll par ye pata chal sake ki naya data aaya hai ya nahi
+  function dataSignature(rows) {
+    return rows.map(r => r.fileId).join(',');
   }
+
+  function loadGallery() {
+    if (isFetchingGallery) return Promise.resolve();
+    isFetchingGallery = true;
+    return fetch(WEBAPP_URL)
+      .then(r => r.json())
+      .then(rows => {
+        rows = rows || [];
+        const sig = dataSignature(rows);
+        // Sirf tab re-render karo jab data waqai badla ho — is se
+        // scroll position aur selection unnecessarily reset nahi hote
+        if (sig !== lastSignature) {
+          lastSignature = sig;
+          rowsCache = rows;
+          renderGallery();
+        }
+      })
+      .catch(() => {})
+      .finally(() => { isFetchingGallery = false; });
+  }
+
+  // ===== Live polling: gallery khuli ho to har kuch second mein naye photos check karo =====
+  function startPolling() {
+    stopPolling();
+    liveDot.classList.add('on');
+    pollTimer = setInterval(() => {
+      // Tab background mein ho to poll skip karo, battery/data bachane ke liye
+      if (document.hidden) return;
+      loadGallery();
+    }, POLL_INTERVAL_MS);
+  }
+
+  function stopPolling() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    liveDot.classList.remove('on');
+  }
+
+  // Tab wapas visible hone par turant ek fresh check kar lo
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && galleryOverlay.classList.contains('show')) {
+      loadGallery();
+    }
+  });
 
   function groupLabel(d) {
     const date = new Date(d);
@@ -491,6 +554,7 @@
   }
 
   function renderGallery() {
+    const scrollPos = ovBody.scrollTop; // scroll position yaad rakho re-render ke liye
     ovBody.innerHTML = '';
     if (!rowsCache.length) {
       ovBody.innerHTML = '<div class="empty-state">No saved photos yet</div>';
@@ -522,6 +586,8 @@
       });
       ovBody.appendChild(grid);
     });
+    ovBody.scrollTop = scrollPos; // scroll position wapas restore karo
+    updateSelectAllLabel();
   }
 
   function cellTap(idx, cell) {
@@ -613,12 +679,15 @@
     updateSelectionBar();
     if (failed) pill('err', failed + ' photo(s) delete nahi hui');
     else pill('ok', 'Deleted ✓');
+    lastSignature = ''; // force refresh
     loadGallery();
   });
 
   viewGalleryBtn.addEventListener('click', () => {
     galleryOverlay.classList.add('show');
+    lastSignature = ''; // gallery khulte hi turant fresh data lao
     loadGallery();
+    startPolling();
   });
   closeGallery.addEventListener('click', () => {
     galleryOverlay.classList.remove('show');
@@ -626,6 +695,7 @@
     selectToggle.classList.remove('active'); selectToggle.textContent = 'Select';
     selectAllBtn.style.display = 'none';
     updateSelectionBar();
+    stopPolling();
   });
 
   function openSingle(idx) {
@@ -647,6 +717,7 @@
       await deleteFile(row.fileId);
       pill('ok', 'Deleted ✓');
       singleOverlay.classList.remove('show');
+      lastSignature = ''; // force refresh
       loadGallery();
     } catch (err) {
       pill('err', 'Delete nahi hui');
