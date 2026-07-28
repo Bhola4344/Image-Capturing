@@ -167,6 +167,19 @@
       justify-content: center;
     }
 
+    .pending-item .spinner-badge {
+      position: absolute;
+      bottom: 3px;
+      left: 3px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: rgba(0, 0, 0, 0.75);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
     .save-row {
       padding: 8px 14px 14px;
     }
@@ -280,6 +293,12 @@
       border-top-color: #fff;
       animation: spin .6s linear infinite;
       display: inline-block;
+    }
+
+    .spinner.sm {
+      width: 10px;
+      height: 10px;
+      border-width: 1.5px;
     }
 
     @keyframes spin {
@@ -762,8 +781,7 @@
     <div class="ov-header">
       <h1><span class="live-dot" id="live-dot"></span>Saved Photos</h1>
       <div class="header-actions">
-        <button class="text-btn" id="select-all-btn" style="display:none;">Select All</button>
-        <button class="text-btn" id="select-toggle">Select</button>
+        <button class="text-btn" id="select-toggle">Select All</button>
         <button class="icon-btn" id="close-gallery">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
             <path d="M6 6L18 18M6 18L18 6" stroke="white" stroke-width="2" stroke-linecap="round" />
@@ -875,7 +893,6 @@
     const closeGallery = document.getElementById('close-gallery');
     const ovBody = document.getElementById('ov-body');
     const selectToggle = document.getElementById('select-toggle');
-    const selectAllBtn = document.getElementById('select-all-btn');
     const selectionBar = document.getElementById('selection-bar');
     const selectionCount = document.getElementById('selection-count');
     const dlSelectedBtn = document.getElementById('dl-selected');
@@ -916,7 +933,10 @@
       });
     }
 
-    let pending = [];       // photos clicked but not saved yet: [{dataUrl}]
+    // pending item shape: {dataUrl, ready, compressPromise}
+    // dataUrl shuru me raw (uncompressed) hota hai taaki preview turant dikhe,
+    // fir background me compress hoke usi object ka dataUrl replace ho jata hai.
+    let pending = [];
     let rowsCache = [];     // already-saved photos from sheet
     let selectMode = false;
     let selected = new Set();
@@ -938,8 +958,18 @@
     // ===== Upload from device gallery/files (local only, no upload yet) =====
     uploadBtn.addEventListener('click', () => galleryInput.click());
 
+    // File ko turant (bina resize) dataURL me padhta hai — instant preview ke liye
+    function readAsDataURL(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = e => resolve(e.target.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
+
     // Photo ko resize + JPEG compress karta hai taaki size kam ho lekin
-    // dhundhla na dikhe. maxDim=1600 aur quality=0.82 ek accha balance hai.
+    // dhundhla na dikhe. maxDim=1440 aur quality=0.75 ek accha balance hai.
     function compressImage(file, maxDim = 1440, quality = 0.75) {
       return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -968,38 +998,45 @@
       });
     }
 
-    cameraInput.addEventListener('change', async (e) => {
+    // Ek photo ko pending list me daalta hai — turant raw preview dikhata hai,
+    // fir background me compress karke usi item ka dataUrl replace kar deta hai.
+    // Save button sirf compressPromise ka wait karega, isliye upload ke waqt
+    // compression pehle hi ho chuka hota hai (fast save).
+    async function addPendingPhoto(file) {
+      const item = {dataUrl: null, ready: false, compressPromise: null};
+      pending.push(item);
+      renderPending();
+
+      try {
+        item.dataUrl = await readAsDataURL(file);
+        renderPending();
+      } catch (err) {
+        pill('err', 'Preview nahi bani');
+      }
+
+      item.compressPromise = compressImage(file)
+        .then(compressed => {
+          item.dataUrl = compressed;
+          item.ready = true;
+          renderPending();
+        })
+        .catch(() => {item.ready = false;});
+    }
+
+    cameraInput.addEventListener('change', (e) => {
       const file = e.target.files[0];
       if (!file) return;
       cameraInput.value = '';
-      try {
-        const compressedDataUrl = await compressImage(file);
-        pending.push({dataUrl: compressedDataUrl});
-        renderPending();
-      } catch (err) {
-        pill('err', 'Photo process nahi hui');
-      }
+      addPendingPhoto(file);
     });
 
-    // Ek ya ek se zyada files (gallery/files se chuni gayi) ko process karke
-    // pending list me daalta hai — jaisa camera se click karne par hota hai
-    galleryInput.addEventListener('change', async (e) => {
+    // Ek ya ek se zyada files (gallery/files se chuni gayi) — sabki preview turant
+    // dikhti hai, har ek ki compression background me parallel chalti hai
+    galleryInput.addEventListener('change', (e) => {
       const files = Array.from(e.target.files || []).filter(f => f.type.startsWith('image/'));
       galleryInput.value = '';
       if (!files.length) return;
-      pill('busy', 'Photos load ho rahi hain...');
-      let failed = 0;
-      for (const file of files) {
-        try {
-          const compressedDataUrl = await compressImage(file);
-          pending.push({dataUrl: compressedDataUrl});
-          renderPending();
-        } catch (err) {
-          failed++;
-        }
-      }
-      if (failed) pill('err', failed + ' photo(s) load nahi hui');
-      else pill('ok', files.length + ' photo(s) add ✓');
+      files.forEach(file => addPendingPhoto(file));
     });
 
     function renderPending() {
@@ -1008,7 +1045,8 @@
       pending.forEach((p, idx) => {
         const item = document.createElement('div');
         item.className = 'pending-item';
-        item.innerHTML = `<img src="${p.dataUrl}"><button class="x" data-idx="${idx}">
+        const busyBadge = p.ready ? '' : `<div class="spinner-badge"><span class="spinner sm"></span></div>`;
+        item.innerHTML = `<img src="${p.dataUrl || ''}">${busyBadge}<button class="x" data-idx="${idx}">
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M6 6L18 18M6 18L18 6" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>
       </button>`;
         pendingStrip.appendChild(item);
@@ -1019,6 +1057,8 @@
     pendingStrip.addEventListener('click', (e) => {
       const btn = e.target.closest('.x');
       if (!btn) return;
+      // Sirf pending list se hata do — kuch bhi server par upload nahi hua
+      // hota jab tak Save nahi dabaya, isliye yahan koi delete-call ki zaroorat nahi
       pending.splice(Number(btn.dataset.idx), 1);
       renderPending();
     });
@@ -1027,6 +1067,13 @@
     saveBtn.addEventListener('click', async () => {
       if (!pending.length) return;
       saveBtn.disabled = true;
+      saveBtn.textContent = 'Preparing...';
+
+      // Agar koi photo abhi bhi background me compress ho rahi hai to uska wait
+      // karo — normally ye turant resolve ho jayega kyunki compression pehle
+      // hi (photo click hote hi) shuru ho chuki thi
+      await Promise.all(pending.map(item => item.compressPromise || Promise.resolve()));
+
       const total = pending.length;
       let done = 0;
       let failed = 0;
@@ -1165,7 +1212,6 @@
         ovBody.appendChild(grid);
       });
       ovBody.scrollTop = scrollPos; // scroll position wapas restore karo
-      updateSelectAllLabel();
     }
 
     function toggleSelect(idx, cell) {
@@ -1180,9 +1226,7 @@
         selectMode = true;
         selectToggle.classList.add('active');
         selectToggle.textContent = 'Cancel';
-        selectAllBtn.style.display = '';
       }
-      updateSelectAllLabel();
       updateSelectionBar();
     }
 
@@ -1191,35 +1235,19 @@
       selectionCount.textContent = selected.size + ' selected';
     }
 
+    // "Select All" ek hi tap me select-mode ON karke sab photos select kar deta hai;
+    // dobara tap ("Cancel") karne par sab deselect ho jate hain
     selectToggle.addEventListener('click', () => {
       selectMode = !selectMode;
       selectToggle.classList.toggle('active', selectMode);
-      selectToggle.textContent = selectMode ? 'Cancel' : 'Select';
-      selectAllBtn.style.display = selectMode ? '' : 'none';
-      if (!selectMode) {
-        selected.clear();
-        document.querySelectorAll('.cell.selected').forEach(c => c.classList.remove('selected'));
-      }
-      updateSelectAllLabel();
-      updateSelectionBar();
-    });
+      selectToggle.textContent = selectMode ? 'Cancel' : 'Select All';
 
-    function updateSelectAllLabel() {
-      const allSelected = rowsCache.length > 0 && selected.size === rowsCache.length;
-      selectAllBtn.textContent = allSelected ? 'Deselect All' : 'Select All';
-    }
-
-    selectAllBtn.addEventListener('click', () => {
-      const allSelected = rowsCache.length > 0 && selected.size === rowsCache.length;
-      if (allSelected) {
-        selected.clear();
-      } else {
+      if (selectMode) {
         rowsCache.forEach((_, idx) => selected.add(idx));
+      } else {
+        selected.clear();
       }
-      document.querySelectorAll('.cell').forEach(cell => {
-        cell.classList.toggle('selected', selected.has(Number(cell.dataset.idx)));
-      });
-      updateSelectAllLabel();
+      renderGallery();
       updateSelectionBar();
     });
 
@@ -1304,8 +1332,7 @@
     closeGallery.addEventListener('click', () => {
       galleryOverlay.classList.remove('show');
       selectMode = false; selected.clear();
-      selectToggle.classList.remove('active'); selectToggle.textContent = 'Select';
-      selectAllBtn.style.display = 'none';
+      selectToggle.classList.remove('active'); selectToggle.textContent = 'Select All';
       updateSelectionBar();
       stopPolling();
     });
@@ -1343,7 +1370,6 @@
       }
     });
 
-    // ===== PDF download (single/batch) =====
     // ===== PDF download (single/batch) =====
     async function fetchImageBase64(fileId) {
       const res = await fetch(WEBAPP_URL + '?action=getImage&fileId=' + encodeURIComponent(fileId));
